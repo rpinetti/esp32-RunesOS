@@ -1,0 +1,4 @@
+{
+    "idf.currentSetup": "C:\\esp\\v6.1-rc1\\esp-idf",
+    "sonarlint.pathToCompileCommands": "${workspaceFolder}\\lv_port_pc_vscode\\build\\compile_commands.json"
+}

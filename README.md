@@ -36,3 +36,19 @@ pio run
 
 # 3. Flash via USB
 pio run -t upload
+
+## lv_port_pc_vscode
+```bash
+cd C:\msys64\home\rober\esp32-RunesOS
+
+& C:\msys64\mingw64\bin\cmake.exe `
+  -S lv_port_pc_vscode `
+  -B lv_port_pc_vscode\build-runesos `
+  -G "MinGW Makefiles" `
+  -DUSE_FREERTOS=OFF
+
+& C:\msys64\mingw64\bin\cmake.exe `
+  --build lv_port_pc_vscode\build-runesos `
+  --parallel 4
+
+.\lv_port_pc_vscode\bin\main.exe
