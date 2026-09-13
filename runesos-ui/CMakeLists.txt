@@ -1,0 +1,31 @@
+idf_component_register(
+    SRCS
+        "runesos.c"
+        "src/runesos_app_registry.c"
+        "src/runesos_homescreen.c"
+        "src/runesos_lockscreen.c"
+        "src/runesos_quicksettings.c"
+        "src/runesos_session.c"
+        "src/runesos_statusbar.c"
+        "src/apps/app_config.c"
+        "src/apps/app_files.c"
+        "src/apps/app_media.c"
+        "src/apps/app_notas.c"
+        "src/apps/app_oraculo.c"
+        "src/apps/app_placeholders.c"
+        "src/apps/app_relogio.c"
+        "src/apps/app_tarefas.c"
+        "src/apps/app_tempo.c"
+        "src/apps/app_terminal.c"
+    INCLUDE_DIRS
+        "."
+        "core"
+        "include"
+        "src"
+        "src/apps"
+        "launcher"
+        "theme"
+    REQUIRES
+        lvgl
+        firmware
+)

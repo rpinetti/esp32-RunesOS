@@ -4,3 +4,5 @@ dependencies:
   valdanylchuk/breezybox: '*'
   espressif/lua: '*'
   espressif/esp-tflite-micro: '*'
+  espressif/cjson: '*'
+

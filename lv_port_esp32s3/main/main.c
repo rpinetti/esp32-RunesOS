@@ -13,6 +13,9 @@
 #include "LVGL_Example.h"
 #include "Wireless.h"
 #include "BAT_Driver.h"
+#include "runesos_fw.h"
+#include "runesos.h"
+#include "hal_runesos_board.h"
 
 void Driver_Loop(void *parameter)
 {
@@ -50,14 +53,10 @@ void app_main(void)
     Touch_Init();
     SD_Init();
     LVGL_Init();
-/********************* Demo *********************/
-    Lvgl_Example1();
 
-    // lv_demo_widgets();
-    // lv_demo_keypad_encoder();
-    // lv_demo_benchmark();
-    // lv_demo_stress();
-    // lv_demo_music();
+    runesos_fw_set_hal(&runesos_hal_board);
+    runesos_fw_init();
+    runesos_init();
 
     while (1) {
         // raise the task priority of LVGL and/or reduce the handler period can improve the performance

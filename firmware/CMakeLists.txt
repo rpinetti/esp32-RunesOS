@@ -1,0 +1,14 @@
+idf_component_register(
+    SRCS
+        "runesos_fw.c"
+        "src/hal_runesos.c"
+        "services/battery_service.c"
+        "services/radio_service.c"
+        "services/time_service.c"
+    INCLUDE_DIRS
+        "."
+        "hal"
+        "includes"
+        "services"
+        "src"
+)

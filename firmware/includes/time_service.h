@@ -1,8 +1,8 @@
 #ifndef RUNESOS_TIME_SERVICE_H
 #define RUNESOS_TIME_SERVICE_H
 
-#include "hal/hal_time.h"
+#include "hal/hal_runesos.h"
 
-void runesos_time_get(runesos_time_t *t);
+void runesos_time_get(runesos_hal_time_t *t);
 
 #endif

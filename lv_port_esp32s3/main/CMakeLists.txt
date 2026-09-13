@@ -13,6 +13,7 @@ idf_component_register(
                               "Wireless/Wireless.c"
                               "Buzzer/Buzzer.c"
                               "BAT_Driver/BAT_Driver.c"
+                              "../src/hal/hal_runesos_board.c"
 
                         INCLUDE_DIRS "./EXIO"
                                      "./LCD_Driver"
@@ -27,5 +28,10 @@ idf_component_register(
                                      "./Wireless"
                                      "./Buzzer"
                                      "./BAT_Driver"
+                                     "../src/hal"
                                      "."
+                        REQUIRES     firmware
+                                     runesos-ui
                         )
+
+

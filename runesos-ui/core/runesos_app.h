@@ -2,6 +2,8 @@
 #define RUNESOS_APP_H
 
 #include "lvgl.h"
+#include "lvgl_compat.h"
+
 
 /* Contrato que todo app do RunesOS deve implementar */
 typedef struct {

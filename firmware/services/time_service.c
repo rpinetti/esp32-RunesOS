@@ -1,13 +1,18 @@
 #include "time_service.h"
-#include <stddef.h>
+#include "runesos_fw.h"
 
-const runesos_hal_time_t *runesos_hal_time = NULL;
-
-void runesos_time_get(runesos_time_t *t)
+void runesos_time_get(runesos_hal_time_t *t)
 {
-    if (runesos_hal_time && runesos_hal_time->get_time) {
-        runesos_hal_time->get_time(t);
+    const runesos_hal_t *hal = runesos_fw_get_hal();
+    if (hal && hal->get_time) {
+        hal->get_time(t);
     } else {
-        t->hour = 0; t->minute = 0; t->second = 0;
+        t->year    = 2000;
+        t->month   = 1;
+        t->day     = 1;
+        t->hour    = 0;
+        t->minute  = 0;
+        t->second  = 0;
+        t->weekday = 0;
     }
 }

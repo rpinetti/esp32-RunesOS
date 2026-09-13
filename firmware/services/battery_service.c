@@ -1,14 +1,14 @@
 #include "battery_service.h"
-#include <stddef.h>
+#include "runesos_fw.h"
 
-const runesos_hal_battery_t *runesos_hal_battery = NULL;
-
-void runesos_battery_get(runesos_battery_state_t *s)
+void runesos_battery_get(runesos_hal_battery_t *s)
 {
-    if (runesos_hal_battery && runesos_hal_battery->get_state) {
-        runesos_hal_battery->get_state(s);
+    const runesos_hal_t *hal = runesos_fw_get_hal();
+    if (hal && hal->get_battery) {
+        hal->get_battery(s);
     } else {
-        s->level = 0;
-        s->charging = false;
+        s->percent    = 0;
+        s->charging   = false;
+        s->voltage_mv = 0;
     }
 }

@@ -2,7 +2,9 @@
 #define RUNESOS_LOCKSCREEN_H
 
 #include "lvgl.h"
+#include "lvgl_compat.h"
 #include "hal_runesos.h"
+
 
 typedef void (*runesos_unlock_cb_t)(void);
 

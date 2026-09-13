@@ -1,0 +1,484 @@
+#include "breezybox.h"
+#include "breezy_vfs.h"
+#include "breezy_cmd.h"
+#include "breezy_exec.h"
+#include "esp_console.h"
+#include "esp_heap_caps.h"
+#include "linenoise/linenoise.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <dirent.h>
+
+#ifdef CONFIG_BREEZYBOX_SHELL_SCRIPTING
+#include "sh.h"
+
+// Read an entire file into a malloc'd buffer (control flow needs the whole
+// script, not line-at-a-time). Returns NULL on error; caller frees.
+static char *read_whole_file(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (sz < 0) { fclose(f); return NULL; }
+    char *buf = malloc((size_t)sz + 1);
+    if (!buf) { fclose(f); return NULL; }
+    size_t n = fread(buf, 1, (size_t)sz, f);
+    fclose(f);
+    buf[n] = '\0';
+    return buf;
+}
+
+// Run a whole script file through the rich interpreter. Returns exit status.
+// argc/argv are the script's positional params: argv[0] = $0, argv[1..] = $1..
+static int run_script_file(const char *path, int argc, char **argv)
+{
+    char *src = read_whole_file(path);
+    if (!src) return -1;
+    sh_state st;
+    sh_state_init(&st);
+    int ret = sh_run_string_args(&st, src, argc, argv);
+    sh_state_free(&st);
+    free(src);
+    return ret;
+}
+#endif // CONFIG_BREEZYBOX_SHELL_SCRIPTING
+
+#define INIT_SCRIPT BREEZYBOX_MOUNT_POINT "/init.sh"
+#define DEFAULT_INIT "echo Welcome to BreezyBox!\n"
+
+static esp_console_repl_t *s_repl = NULL;
+
+// ============ Short Commands (inline) ============
+
+int cmd_echo(int argc, char **argv)
+{
+    for (int i = 1; i < argc; i++) {
+        printf("%s%s", argv[i], (i < argc - 1) ? " " : "");
+    }
+    printf("\n");
+    return 0;
+}
+
+int cmd_pwd(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+    printf("%s\n", breezybox_cwd());
+    return 0;
+}
+
+int cmd_cd(int argc, char **argv)
+{
+    if (argc < 2) {
+        printf("%s\n", breezybox_cwd());
+        return 0;
+    }
+    if (breezybox_set_cwd(argv[1]) != 0) {
+        printf("cd: %s: No such directory\n", argv[1]);
+        return 1;
+    }
+    return 0;
+}
+
+int cmd_clear(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+    printf("\033[2J\033[H");  // Clear screen + cursor home
+    return 0;
+}
+
+int cmd_free(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+    
+    // Internal SRAM (DMA-capable, needed for WiFi/BT)
+    size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t total_internal = heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t min_internal = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    
+    printf("SRAM:  %6uK free, %6uK min, %6uK total\n", 
+           (unsigned)(free_internal / 1024),
+           (unsigned)(min_internal / 1024),
+           (unsigned)(total_internal / 1024));
+    
+#ifdef CONFIG_SPIRAM
+    size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    size_t total_psram = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+    size_t min_psram = heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM);
+    
+    printf("PSRAM: %6uK free, %6uK min, %6uK total\n",
+           (unsigned)(free_psram / 1024),
+           (unsigned)(min_psram / 1024),
+           (unsigned)(total_psram / 1024));
+#endif
+    
+    return 0;
+}
+
+int cmd_sleep(int argc, char **argv)
+{
+    if (argc < 2) {
+        printf("Usage: sleep <seconds>\n");
+        return 1;
+    }
+
+    char *end;
+    long seconds = strtol(argv[1], &end, 10);
+    if (*end != '\0' || seconds < 0) {
+        printf("sleep: invalid time interval '%s'\n", argv[1]);
+        return 1;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(seconds * 1000));
+    return 0;
+}
+
+// Run a script file with redirect support
+int cmd_sh(int argc, char **argv)
+{
+    if (argc < 2) {
+        printf("Usage: sh <script>\n");
+        return 1;
+    }
+    
+    char resolved[BREEZYBOX_MAX_PATH * 2 + 2];
+    const char *path = argv[1];
+    if (path[0] != '/') {
+        if (!breezybox_resolve_path(path, resolved, sizeof(resolved))) {
+            printf("sh: path too long\n");
+            return 1;
+        }
+        path = resolved;
+    }
+    
+#ifdef CONFIG_BREEZYBOX_SHELL_SCRIPTING
+    // $0 = script path, $1..$N = the remaining args after `sh <script>`.
+    int ret = run_script_file(path, argc - 1, argv + 1);
+    if (ret == -1) {
+        printf("sh: %s: No such file\n", argv[1]);
+        return 1;
+    }
+    return ret;
+#else
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        printf("sh: %s: No such file\n", argv[1]);
+        return 1;
+    }
+
+    char line[256];
+    int ret = 0;
+    while (fgets(line, sizeof(line), f)) {
+        size_t len = strlen(line);
+        while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r' || line[len-1] == ' ')) {
+            line[--len] = '\0';
+        }
+        
+        char *p = line;
+        while (*p && isspace((unsigned char)*p)) p++;
+        if (*p == '\0' || *p == '#') continue;
+        
+        ret = breezybox_exec(p);
+    }
+    fclose(f);
+    return ret;
+#endif // CONFIG_BREEZYBOX_SHELL_SCRIPTING
+}
+
+// ============ Init Script ============
+
+static void create_default_init(void)
+{
+    FILE *f = fopen(INIT_SCRIPT, "w");
+    if (f) {
+        fputs(DEFAULT_INIT, f);
+        fclose(f);
+    }
+}
+
+static void run_init_script(void)
+{
+    FILE *f = fopen(INIT_SCRIPT, "r");
+    if (!f) {
+        create_default_init();
+        f = fopen(INIT_SCRIPT, "r");
+        if (!f) return;
+    }
+    fclose(f);
+
+#ifdef CONFIG_BREEZYBOX_SHELL_SCRIPTING
+    // Run the whole init script through the rich interpreter.
+    (void)run_script_file(INIT_SCRIPT, 0, NULL);
+#else
+    f = fopen(INIT_SCRIPT, "r");
+    if (!f) return;
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        size_t len = strlen(line);
+        while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r' || line[len-1] == ' ')) {
+            line[--len] = '\0';
+        }
+
+        char *p = line;
+        while (*p && isspace((unsigned char)*p)) p++;
+        if (*p == '\0' || *p == '#') continue;
+
+        // Execute with redirect support
+        breezybox_exec(p);
+    }
+    fclose(f);
+#endif // CONFIG_BREEZYBOX_SHELL_SCRIPTING
+}
+
+// ============ Command Registration ============
+
+esp_err_t breezybox_register_commands(void)
+{
+    const esp_console_cmd_t cmds[] = {
+        { .command = "echo",  .help = "Print arguments",         .hint = "[text...]", .func = &cmd_echo  },
+        { .command = "pwd",   .help = "Print working directory", .hint = NULL,        .func = &cmd_pwd   },
+        { .command = "cd",    .help = "Change directory",        .hint = "[path]",    .func = &cmd_cd    },
+        { .command = "ls",    .help = "List directory",          .hint = "[path]",    .func = &cmd_ls    },
+        { .command = "cat",   .help = "Print file contents",     .hint = "<file>",    .func = &cmd_cat   },
+        { .command = "head",  .help = "Show first lines",        .hint = "[-n N] <file>", .func = &cmd_head },
+        { .command = "tail",  .help = "Show last lines",         .hint = "[-n N] <file>", .func = &cmd_tail },
+        { .command = "more",  .help = "Paginate file",           .hint = "<file>",    .func = &cmd_more  },
+        { .command = "wc",    .help = "Count lines/words/chars", .hint = "[-lwc] <file>", .func = &cmd_wc },
+        { .command = "cksum", .help = "Checksum and byte count",  .hint = "[file...]", .func = &cmd_cksum },
+        { .command = "printf",.help = "Format and print",       .hint = "<fmt> [arg...]", .func = &cmd_printf },
+        { .command = "mkdir", .help = "Create directory",        .hint = "[-p] <dir>...", .func = &cmd_mkdir },
+        { .command = "cp",    .help = "Copy file",               .hint = "<src> <dst>", .func = &cmd_cp  },
+        { .command = "mv",    .help = "Move/rename file",        .hint = "<src> <dst>", .func = &cmd_mv  },
+        { .command = "rm",    .help = "Remove file/directory",   .hint = "[-r] <file...>", .func = &cmd_rm },
+        { .command = "df",    .help = "Show disk free space",    .hint = NULL,        .func = &cmd_df    },
+        { .command = "du",    .help = "Show disk usage",         .hint = "[-s] [path]", .func = &cmd_du  },
+        { .command = "free",  .help = "Show memory usage",       .hint = NULL,        .func = &cmd_free  },
+        { .command = "date",  .help = "Show/set date and time",  .hint = "[\"YYYY-MM-DD HH:MM:SS\"]", .func = &cmd_date },
+        { .command = "clear", .help = "Clear screen",            .hint = NULL,        .func = &cmd_clear },
+        { .command = "sleep", .help = "Sleep for N seconds",     .hint = "<seconds>", .func = &cmd_sleep },
+        { .command = "sh",    .help = "Run script file",         .hint = "<script>",  .func = &cmd_sh    },
+        { .command = "eget",  .help = "Download ELF from GitHub", .hint = "<user/repo>", .func = &cmd_eget },
+        { .command = "wifi",  .help = "WiFi commands",           .hint = "<scan|connect|disconnect|status|forget>", .func = &cmd_wifi },
+        { .command = "httpd", .help = "HTTP file server",        .hint = "[dir] [-p port]", .func = &cmd_httpd },
+    };
+
+    for (size_t i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {
+        esp_err_t err = esp_console_cmd_register(&cmds[i]);
+        if (err != ESP_OK) return err;
+    }
+    return ESP_OK;
+}
+
+// ============ Common Init ============
+
+static esp_err_t breezybox_init_common(const esp_console_cmd_t *extra_cmds,
+                                       size_t extra_count)
+{
+    // Force-export symbols for ELF runtime linking
+    breezybox_export_symbols();
+
+    // Initialize filesystem
+    esp_err_t ret = breezybox_vfs_init();
+    if (ret != ESP_OK) {
+        printf("BreezyBox: filesystem init failed\n");
+        return ret;
+    }
+
+    // Initialize exec subsystem (for redirects)
+    breezybox_exec_init();
+
+    // Initialize console (for command parsing)
+    esp_console_config_t console_config = ESP_CONSOLE_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_console_init(&console_config));
+
+    // Register commands
+    breezybox_register_commands();
+    esp_console_register_help_command();
+
+    // Register caller-supplied commands before the init script runs, so that
+    // init.sh can reference them (e.g. an optional component's `sshd`).
+    for (size_t i = 0; i < extra_count; i++) {
+        esp_console_cmd_register(&extra_cmds[i]);
+    }
+
+    // Run init script
+    run_init_script();
+
+    return ESP_OK;
+}
+
+int breezybox_exec_line(const char *line)
+{
+#ifdef CONFIG_BREEZYBOX_SHELL_SCRIPTING
+    // Run through the rich interpreter: globbing, quoting, variables,
+    // &&/||, multi-stage pipelines. The state persists across lines so
+    // variables set at the prompt survive.
+    static sh_state st;
+    static bool st_ready = false;
+    if (!st_ready) {
+        sh_state_init(&st);
+        st_ready = true;
+    }
+    int ret = sh_run_string(&st, line);
+    st.exiting = 0;  // `exit` at the prompt must not kill the REPL
+    return ret;
+#else
+    return breezybox_exec(line);
+#endif
+}
+
+// ============ Tab Completion ============
+
+// Add every entry of `dir` starting with `prefix` as a completion. linenoise
+// replaces the whole line, so each candidate is the first `keep_len` chars of
+// `buf` (everything before the name being completed) plus the entry name.
+static void complete_from_dir(linenoiseCompletions *lc, const char *dir,
+                              const char *buf, size_t keep_len,
+                              const char *prefix, bool mark_dirs)
+{
+    DIR *d = opendir(dir);
+    if (!d) return;
+    size_t plen = strlen(prefix);
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (strncmp(e->d_name, prefix, plen) != 0) continue;
+        if (e->d_name[0] == '.' && prefix[0] != '.') continue;
+        char line[BREEZYBOX_MAX_PATH * 2];
+        bool is_dir = mark_dirs && e->d_type == DT_DIR;
+        size_t nlen = strlen(e->d_name);
+        if (keep_len + nlen + (is_dir ? 1 : 0) >= sizeof(line)) continue;
+        memcpy(line, buf, keep_len);
+        memcpy(line + keep_len, e->d_name, nlen);
+        if (is_dir) line[keep_len + nlen++] = '/';
+        line[keep_len + nlen] = '\0';
+        linenoiseAddCompletion(lc, line);
+    }
+    closedir(d);
+}
+
+// Complete the word starting at buf[word_off] as a filesystem path,
+// relative to the shell's cwd.
+static void complete_path(linenoiseCompletions *lc, const char *buf, size_t word_off)
+{
+    const char *word = buf + word_off;
+    const char *slash = strrchr(word, '/');
+    char dir[BREEZYBOX_MAX_PATH * 2];
+    const char *prefix;
+
+    if (slash) {
+        char dir_part[BREEZYBOX_MAX_PATH];
+        size_t dlen = (size_t)(slash - word);
+        if (dlen >= sizeof(dir_part)) return;
+        memcpy(dir_part, word, dlen);
+        dir_part[dlen] = '\0';
+        if (dlen == 0) strcpy(dir_part, "/");  // word like "/roo"
+        if (!breezybox_resolve_path(dir_part, dir, sizeof(dir))) return;
+        prefix = slash + 1;
+        word_off += (size_t)(prefix - word);  // keep the dir part verbatim
+    } else {
+        breezybox_get_cwd(dir, sizeof(dir));
+        prefix = word;
+    }
+    complete_from_dir(lc, dir, buf, word_off, prefix, true);
+}
+
+// Completion callback: registered commands plus /root/bin executables for the
+// first word; filesystem paths for arguments and for a first word containing
+// '/' (e.g. "./myapp").
+static void breezybox_completion(const char *buf, linenoiseCompletions *lc)
+{
+    const char *space = strrchr(buf, ' ');
+    if (space) {
+        complete_path(lc, buf, (size_t)(space + 1 - buf));
+    } else if (strchr(buf, '/')) {
+        complete_path(lc, buf, 0);
+    } else {
+        esp_console_get_completion(buf, lc);
+        complete_from_dir(lc, BREEZYBOX_EXEC_PATH, buf, 0, buf, false);
+    }
+}
+
+// ============ REPL Implementations ============
+
+// Linenoise-based REPL task for stdio mode
+static void stdio_repl_task(void *arg)
+{
+    // Skip probe for now - our VFS console handles terminal queries internally
+    // The probe can cause issues when responses get mixed up
+    // linenoiseSetDumbMode(1);  // Uncomment to force dumb mode for debugging
+    
+    // Setup linenoise with esp_console's completion/hints
+    linenoiseSetMultiLine(1);
+    linenoiseSetCompletionCallback(&breezybox_completion);
+    linenoiseSetHintsCallback((linenoiseHintsCallback *)&esp_console_get_hint);
+    linenoiseHistorySetMaxLen(100);
+    
+    printf("\nType 'help' to get the list of commands.\n");
+    
+    while (true) {
+        char *line = linenoise("$ ");
+        
+        if (line == NULL) {
+            // Ctrl+D or read error, just continue
+            continue;
+        }
+        
+        // Skip empty lines
+        if (strlen(line) > 0) {
+            linenoiseHistoryAdd(line);
+            breezybox_exec_line(line);
+        }
+        
+        linenoiseFree(line);
+    }
+}
+
+esp_err_t breezybox_start_stdio(size_t stack_size, uint32_t priority)
+{
+    return breezybox_start_stdio_ex(stack_size, priority, NULL, 0);
+}
+
+esp_err_t breezybox_start_stdio_ex(size_t stack_size, uint32_t priority,
+                                   const esp_console_cmd_t *extra_cmds,
+                                   size_t extra_count)
+{
+    esp_err_t ret = breezybox_init_common(extra_cmds, extra_count);
+    if (ret != ESP_OK) return ret;
+
+    xTaskCreate(stdio_repl_task, "breezy_repl", stack_size, NULL, priority, NULL);
+    return ESP_OK;
+}
+
+#ifdef ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT
+esp_err_t breezybox_start_usb(size_t stack_size, uint32_t priority)
+{
+    // Initialize filesystem and exec
+    esp_err_t ret = breezybox_vfs_init();
+    if (ret != ESP_OK) {
+        printf("BreezyBox: filesystem init failed\n");
+        return ret;
+    }
+    breezybox_exec_init();
+
+    // Setup USB Serial JTAG REPL (this also initializes console)
+    esp_console_repl_config_t repl_config = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
+    repl_config.prompt = "$ ";
+    repl_config.task_stack_size = stack_size;
+    repl_config.task_priority = priority;
+
+    esp_console_dev_usb_serial_jtag_config_t hw_config =
+        ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
+
+    ESP_ERROR_CHECK(esp_console_new_repl_usb_serial_jtag(&hw_config, &repl_config, &s_repl));
+    
+    breezybox_register_commands();
+    run_init_script();
+
+    return esp_console_start_repl(s_repl);
+}
+#endif // ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT

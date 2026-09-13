@@ -1,9 +1,9 @@
 #include "launcher.h"
 #include "../theme/theme_nordico.h"
 #include "../core/runesos_app.h"
-#include "../../firmware/services/time_service.h"
-#include "../../firmware/services/battery_service.h"
-#include "../../firmware/services/radio_service.h"
+#include "time_service.h"
+#include "battery_service.h"
+#include "radio_service.h"
 #include <stdio.h>
 
 /* Referências que o timer precisa */
@@ -23,20 +23,20 @@ static const char *battery_symbol(int level)
 }
 
 /* Atualiza o ícone de bateria */
-static void update_battery(const runesos_battery_state_t *bat)
+static void update_battery(const runesos_hal_battery_t *bat)
 {
-    const char *sym = bat->charging ? LV_SYMBOL_CHARGE : battery_symbol(bat->level);
+    const char *sym = bat->charging ? LV_SYMBOL_CHARGE : battery_symbol(bat->percent);
     lv_label_set_text(s_battery_label, sym);
 
     /* Vermelho se crítico, dourado se carregando, branco normal */
     lv_color_t color = RUNESOS_COLOR_TEXT;
     if (bat->charging)             color = RUNESOS_COLOR_ACCENT;
-    else if (bat->level <= 15)     color = lv_color_hex(0xe74c3c);
+    else if (bat->percent <= 15)   color = lv_color_hex(0xe74c3c);
     lv_obj_set_style_text_color(s_battery_label, color, 0);
 }
 
 /* Atualiza os ícones de Wi-Fi e BT */
-static void update_radio(const runesos_radio_state_t *radio)
+static void update_radio(const runesos_hal_radio_t *radio)
 {
     lv_obj_set_style_text_color(s_wifi_label,
         radio->wifi_connected ? RUNESOS_COLOR_TEXT : lv_color_hex(0x555555), 0);
@@ -48,9 +48,9 @@ static void update_radio(const runesos_radio_state_t *radio)
 static void statusbar_timer_cb(lv_timer_t *timer)
 {
     (void)timer;
-    runesos_time_t t;
-    runesos_battery_state_t bat;
-    runesos_radio_state_t radio;
+    runesos_hal_time_t t;
+    runesos_hal_battery_t bat;
+    runesos_hal_radio_t radio;
     char buf[16];
 
     /* Hora */

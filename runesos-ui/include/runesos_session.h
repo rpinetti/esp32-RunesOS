@@ -2,7 +2,9 @@
 #define RUNESOS_SESSION_H
 
 #include "lvgl.h"
+#include "lvgl_compat.h"
 #include "hal_runesos.h"
+
 
 /**
  * Inicializa a sessão do RunesOS.
