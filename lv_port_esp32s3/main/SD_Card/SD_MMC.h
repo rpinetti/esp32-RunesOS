@@ -30,3 +30,6 @@ extern uint32_t SDCard_Size;
 extern uint32_t Flash_Size;
 void SD_Init(void);
 void Flash_Searching(void);
+
+/* Cria a hierarquia padrao do RunesOS apos a montagem do cartao. */
+void SD_Ensure_RunesOS_Layout(void);

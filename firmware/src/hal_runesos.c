@@ -3,6 +3,7 @@
 #include <string.h>
 #include <time.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 
 /* ============================================================
  * HAL Mock — Simulador PC (lv_port_pc_vscode)
@@ -10,6 +11,10 @@
  * Simula todos os periféricos com valores plausíveis.
  * O SD card aponta para uma pasta local "sdcard/" no workspace.
  * ============================================================ */
+
+#ifndef RUNESOS_PC_SDCARD_ROOT
+#define RUNESOS_PC_SDCARD_ROOT "sdcard"
+#endif
 
 #define MOCK_MOUNT_POINT  "sdcard/"
 #define MOCK_VOLUME       85
@@ -79,7 +84,15 @@ static void mock_get_imu(runesos_hal_imu_t *imu)
 /* ---- SD Card ---- */
 static void mock_get_sd(runesos_hal_sd_t *sd)
 {
-    sd->mounted = true;
+    struct stat card_root;
+
+    /*
+     * O simulador usa a mesma pasta sdcard/ do repositorio como cartao
+     * removivel. O caminho absoluto e injetado pelo CMake para que a
+     * simulacao continue funcionando independentemente do diretorio atual.
+     */
+    sd->mounted = stat(RUNESOS_PC_SDCARD_ROOT, &card_root) == 0 &&
+                  S_ISDIR(card_root.st_mode);
     sd->total_bytes = 16ULL * 1024 * 1024 * 1024;  /* 16 GB */
     sd->free_bytes  = 12ULL * 1024 * 1024 * 1024;  /* 12 GB livres */
     strncpy(sd->mount_point, MOCK_MOUNT_POINT,

@@ -14,6 +14,22 @@ This example shows the general process of installing an RGB panel driver, and di
 
 ## How to use the example
 
+### RunesOS SD card layout
+
+The physical SD card is mounted at `/sdcard`. After a successful mount, the
+firmware creates the standard RunesOS directories when they are missing:
+
+```text
+/sdcard/system/
+/sdcard/media/
+/sdcard/logs/
+/sdcard/notes/
+/sdcard/home/user/{Desktop,Documents,Downloads,Music,Pictures,Videos}/
+```
+
+The PC simulator uses the repository-level `sdcard/` directory as the
+corresponding physical-card simulation, with the same directory layout.
+
 ### Hardware Required
 
 * An ESP development board, which has RGB LCD peripheral supported and **Octal PSRAM** onboard

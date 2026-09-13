@@ -30,6 +30,7 @@ static const vfs_node_t s_fs_nodes[] = {
     {"system",  "/sdcard", ENTRY_DIR, 0, NULL},
     {"media",   "/sdcard", ENTRY_DIR, 0, NULL},
     {"logs",    "/sdcard", ENTRY_DIR, 0, NULL},
+    {"home",    "/sdcard", ENTRY_DIR, 0, NULL},
     {"README.txt", "/sdcard", ENTRY_FILE_TXT, 1420,
         "=== RunesOS File System ===\n"
         "Bem-vindo ao armazenamento do seu cyberdeck.\n"
@@ -74,6 +75,15 @@ static const vfs_node_t s_fs_nodes[] = {
         "touch_ic = GT911_I2C\n"},
     {"wifi.json", "/sdcard/system", ENTRY_FILE_CFG, 180,
         "{\n  \"autoconnect\": true,\n  \"dhcp\": true,\n  \"ntp_server\": \"pool.ntp.org\"\n}\n"},
+
+    /* Pasta home do usuario */
+    {"user",      "/sdcard/home", ENTRY_DIR, 0, NULL},
+    {"Desktop",   "/sdcard/home/user", ENTRY_DIR, 0, NULL},
+    {"Documents", "/sdcard/home/user", ENTRY_DIR, 0, NULL},
+    {"Downloads", "/sdcard/home/user", ENTRY_DIR, 0, NULL},
+    {"Music",     "/sdcard/home/user", ENTRY_DIR, 0, NULL},
+    {"Pictures",  "/sdcard/home/user", ENTRY_DIR, 0, NULL},
+    {"Videos",    "/sdcard/home/user", ENTRY_DIR, 0, NULL},
 
     /* Pasta media */
     {"hymn_of_norse.mp3", "/sdcard/media", ENTRY_FILE_MEDIA, 3450000, NULL},
@@ -369,4 +379,3 @@ void app_files_destroy(void)
     s_viewer_view = NULL;
     s_path_label = NULL;
 }
-

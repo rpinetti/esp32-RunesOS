@@ -1,12 +1,43 @@
 #include "SD_MMC.h"
+#include <errno.h>
 
 #define EXAMPLE_MAX_CHAR_SIZE    64
 #define MOUNT_POINT "/sdcard"
 
 static const char *SD_TAG = "SD";
 
+static const char *const RUNESOS_SD_DIRECTORIES[] = {
+    MOUNT_POINT "/system",
+    MOUNT_POINT "/media",
+    MOUNT_POINT "/logs",
+    MOUNT_POINT "/notes",
+    MOUNT_POINT "/home",
+    MOUNT_POINT "/home/user",
+    MOUNT_POINT "/home/user/Desktop",
+    MOUNT_POINT "/home/user/Documents",
+    MOUNT_POINT "/home/user/Downloads",
+    MOUNT_POINT "/home/user/Music",
+    MOUNT_POINT "/home/user/Pictures",
+    MOUNT_POINT "/home/user/Videos",
+};
+
 uint32_t Flash_Size = 0;
 uint32_t SDCard_Size = 0;
+
+void SD_Ensure_RunesOS_Layout(void)
+{
+    for (size_t i = 0;
+         i < sizeof(RUNESOS_SD_DIRECTORIES) /
+             sizeof(RUNESOS_SD_DIRECTORIES[0]);
+         ++i) {
+        if (mkdir(RUNESOS_SD_DIRECTORIES[i], 0775) != 0 &&
+            errno != EEXIST) {
+            ESP_LOGW(SD_TAG, "Failed to create %s (errno=%d)",
+                     RUNESOS_SD_DIRECTORIES[i], errno);
+        }
+    }
+}
+
 esp_err_t SD_Card_D3_EN(void)
 {
     Set_EXIO(TCA9554_EXIO4,true);
@@ -116,6 +147,7 @@ void SD_Init(void)
         return;
     }
     ESP_LOGI(SD_TAG, "Filesystem mounted");
+    SD_Ensure_RunesOS_Layout();
 
     // Card has been initialized, print its properties
     sdmmc_card_print_info(stdout, card);
