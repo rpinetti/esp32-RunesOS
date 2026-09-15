@@ -1,5 +1,0 @@
-service:
-  name: esp32-RunesOS
-  identifier: esp32RunesOS
-  orgIdentifier: default
-  projectIdentifier: default_project
